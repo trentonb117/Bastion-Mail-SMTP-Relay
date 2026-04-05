@@ -298,10 +298,32 @@ async def handle_send(request):
         if data.get("reply_to"):
             msg["In-Reply-To"] = data["reply_to"]
 
-        if body_text:
-            msg.attach(MIMEText(body_text, "plain", "utf-8"))
-        if body_html:
-            msg.attach(MIMEText(body_html, "html", "utf-8"))
+        # Check if there are attachments — if so, wrap in mixed multipart
+        attachments = data.get("attachments", [])
+        if attachments:
+            outer = MIMEMultipart("mixed")
+            for h in ("From", "To", "Cc", "Subject", "Message-ID", "Date", "In-Reply-To"):
+                if msg[h]:
+                    outer[h] = msg[h]
+                    del msg[h]
+            if body_text:
+                msg.attach(MIMEText(body_text, "plain", "utf-8"))
+            if body_html:
+                msg.attach(MIMEText(body_html, "html", "utf-8"))
+            outer.attach(msg)
+            for att in attachments:
+                from email import encoders
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(b64decode(att.get("data", "")))
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", "attachment", filename=att.get("filename", "attachment"))
+                outer.attach(part)
+            msg = outer
+        else:
+            if body_text:
+                msg.attach(MIMEText(body_text, "plain", "utf-8"))
+            if body_html:
+                msg.attach(MIMEText(body_html, "html", "utf-8"))
 
         # DKIM sign (fetch per-domain key from admin API, fallback to local)
         msg_bytes = msg.as_bytes()
