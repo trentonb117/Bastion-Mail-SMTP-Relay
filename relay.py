@@ -351,8 +351,20 @@ async def handle_send(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+def _resolve_ipv4(hostname):
+    """Resolve hostname to IPv4 address (skip IPv6 to avoid PTR issues)."""
+    import socket
+    try:
+        results = socket.getaddrinfo(hostname, 25, socket.AF_INET, socket.SOCK_STREAM)
+        if results:
+            return results[0][4][0]  # First IPv4 address
+    except Exception:
+        pass
+    return hostname
+
+
 def _send_to_mx(domain, from_addr, to_addr, msg_string):
-    """Send email to a recipient by looking up their MX record."""
+    """Send email to a recipient by looking up their MX record. Forces IPv4."""
     import dns.resolver
 
     # Look up MX records
@@ -361,12 +373,14 @@ def _send_to_mx(domain, from_addr, to_addr, msg_string):
         mx_hosts = sorted(mx_records, key=lambda r: r.preference)
         mx_host = str(mx_hosts[0].exchange).rstrip(".")
     except Exception:
-        # Fallback to A record
         mx_host = domain
+
+    # Resolve to IPv4 (avoid IPv6 PTR issues)
+    mx_ip = _resolve_ipv4(mx_host)
 
     # Try STARTTLS first, then plain
     try:
-        with smtplib.SMTP(mx_host, 25, timeout=30) as smtp:
+        with smtplib.SMTP(mx_ip, 25, timeout=30, local_hostname=HOSTNAME) as smtp:
             smtp.ehlo(HOSTNAME)
             if smtp.has_extn("STARTTLS"):
                 smtp.starttls()
@@ -375,7 +389,7 @@ def _send_to_mx(domain, from_addr, to_addr, msg_string):
     except Exception as e:
         # Retry with port 587
         try:
-            with smtplib.SMTP(mx_host, 587, timeout=30) as smtp:
+            with smtplib.SMTP(mx_ip, 587, timeout=30, local_hostname=HOSTNAME) as smtp:
                 smtp.ehlo(HOSTNAME)
                 smtp.starttls()
                 smtp.ehlo(HOSTNAME)
