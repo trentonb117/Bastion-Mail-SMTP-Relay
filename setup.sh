@@ -10,9 +10,9 @@
 # Run multiple instances behind DNS round-robin for scaling.
 #
 # Usage:
-#   curl -sL https://raw.githubusercontent.com/trentonb117/Bastion-Mail/main/smtp-server/setup.sh | sudo bash
-#   OR
-#   chmod +x setup.sh && sudo ./setup.sh
+#   wget https://raw.githubusercontent.com/trentonb117/Bastion-Mail-SMTP-Relay/main/setup.sh
+#   chmod +x setup.sh
+#   sudo ./setup.sh
 # ============================================================================
 
 set -euo pipefail
@@ -35,10 +35,10 @@ echo ""
 # Configuration
 # ============================================================================
 
-read -p "Hostname (e.g., smtp.bastionhq.me): " HOSTNAME
-read -p "Bastion Mail API URL (e.g., https://smtp.bastionhq.me): " API_URL
-read -p "API secret (INBOUND_API_SECRET): " API_SECRET
-read -p "Email for Let's Encrypt: " LE_EMAIL
+read -p "Hostname (e.g., smtp.bastionhq.me): " HOSTNAME < /dev/tty
+read -p "Bastion Mail API URL (e.g., https://mail.bastionhq.me): " API_URL < /dev/tty
+read -p "API secret (INBOUND_API_SECRET): " API_SECRET < /dev/tty
+read -p "Email for Let's Encrypt: " LE_EMAIL < /dev/tty
 
 [[ -z "$HOSTNAME" ]] && error "Hostname required"
 [[ -z "$API_URL" ]] && error "API URL required"
@@ -462,7 +462,7 @@ chmod 600 /opt/bastion-relay/relay.py
 # 5. Environment file (secrets go here, not in the service)
 # ============================================================================
 
-read -p "Admin API URL (e.g., https://bastionhq.me): " ADMIN_API_URL
+read -p "Admin API URL (e.g., https://bastionhq.me): " ADMIN_API_URL < /dev/tty
 [[ -z "$ADMIN_API_URL" ]] && ADMIN_API_URL="https://bastionhq.me"
 
 cat > /opt/bastion-relay/.env << EOF

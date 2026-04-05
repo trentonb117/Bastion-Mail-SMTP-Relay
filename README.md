@@ -8,7 +8,9 @@ Stateless SMTP relay for BastionHQ's email service. Receives inbound email on po
 
 ```bash
 # On a fresh Ubuntu 24.04 VPS:
-curl -sL https://raw.githubusercontent.com/trentonb117/Bastion-Mail-SMTP-Relay/main/setup.sh | sudo bash
+wget https://raw.githubusercontent.com/trentonb117/Bastion-Mail-SMTP-Relay/main/setup.sh
+chmod +x setup.sh
+sudo ./setup.sh
 ```
 
 ## Architecture
