@@ -111,6 +111,37 @@ class InboundHandler:
             except Exception:
                 pass
 
+            # DKIM verification (needs raw bytes)
+            dkim_result = {"result": "none", "detail": "Not checked"}
+            try:
+                if HAS_DKIM:
+                    dkim_valid = dkim.verify(envelope.content)
+                    dkim_result = {
+                        "result": "pass" if dkim_valid else "fail",
+                        "detail": "Signature valid" if dkim_valid else "Signature invalid or missing",
+                    }
+                else:
+                    dkim_result = {"result": "none", "detail": "DKIM library not available"}
+            except Exception as e:
+                dkim_result = {"result": "error", "detail": str(e)[:200]}
+
+            # Reverse DNS check
+            rdns_result = {"result": "none", "detail": "Not checked"}
+            if sender_ip:
+                try:
+                    import socket
+                    hostname = socket.gethostbyaddr(sender_ip)[0]
+                    # Verify forward lookup matches
+                    forward_ips = socket.gethostbyname_ex(hostname)[2]
+                    if sender_ip in forward_ips:
+                        rdns_result = {"result": "pass", "detail": f"{sender_ip} → {hostname}", "hostname": hostname}
+                    else:
+                        rdns_result = {"result": "fail", "detail": f"rDNS {hostname} doesn't resolve back to {sender_ip}", "hostname": hostname}
+                except socket.herror:
+                    rdns_result = {"result": "fail", "detail": f"No rDNS record for {sender_ip}"}
+                except Exception as e:
+                    rdns_result = {"result": "error", "detail": str(e)[:200]}
+
             # Build payload for API
             payload = {
                 "from_address": envelope.mail_from,
@@ -127,6 +158,8 @@ class InboundHandler:
                 "attachments": attachments,
                 "recipients": envelope.rcpt_tos,
                 "sender_ip": sender_ip,
+                "dkim_result": dkim_result,
+                "rdns_result": rdns_result,
             }
 
             # POST to Bastion Mail API
