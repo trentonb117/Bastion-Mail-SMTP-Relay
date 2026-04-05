@@ -31,6 +31,12 @@ from aiosmtpd.smtp import SMTP as SMTPServer
 from aiohttp import web
 import requests
 
+try:
+    import dkim
+    HAS_DKIM = True
+except ImportError:
+    HAS_DKIM = False
+
 # ---------------------------------------------------------------------------
 # Config from environment
 # ---------------------------------------------------------------------------
