@@ -251,6 +251,32 @@ async def handle_send(request):
         if body_html:
             msg.attach(MIMEText(body_html, "html", "utf-8"))
 
+        # DKIM sign
+        msg_bytes = msg.as_bytes()
+        if HAS_DKIM:
+            from_domain = from_address.split("@")[1] if "@" in from_address else HOSTNAME
+            try:
+                key_path = os.environ.get("DKIM_KEY_PATH", "/opt/bastion-relay/dkim/private.key")
+                selector = os.environ.get("DKIM_SELECTOR", "bastion")
+                if os.path.exists(key_path):
+                    with open(key_path, "rb") as f:
+                        private_key = f.read()
+                    sig = dkim.sign(
+                        msg_bytes,
+                        selector.encode(),
+                        from_domain.encode(),
+                        private_key,
+                        include_headers=[b"From", b"To", b"Subject", b"Date", b"Message-ID"],
+                    )
+                    msg_bytes = sig + msg_bytes
+                    log.info(f"DKIM signed for {from_domain}")
+                else:
+                    log.warning(f"DKIM key not found: {key_path}")
+            except Exception as e:
+                log.error(f"DKIM signing failed: {e}")
+
+        msg_string = msg_bytes.decode("utf-8", errors="replace")
+
         # Send via SMTP to each recipient's MX
         all_recipients = to_addrs + cc_addrs
         errors = []
@@ -258,7 +284,7 @@ async def handle_send(request):
         for recipient in all_recipients:
             try:
                 domain = recipient.split("@")[1]
-                _send_to_mx(domain, from_address, recipient, msg.as_string())
+                _send_to_mx(domain, from_address, recipient, msg_string)
                 log.info(f"Sent to {recipient}")
             except Exception as e:
                 log.error(f"Failed to send to {recipient}: {e}")
