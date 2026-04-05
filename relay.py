@@ -104,6 +104,13 @@ class InboundHandler:
             to_addrs = [addr for _, addr in email.utils.getaddresses(msg.get_all("To", []))]
             cc_addrs = [addr for _, addr in email.utils.getaddresses(msg.get_all("Cc", []))]
 
+            # Get sender IP from the SMTP session
+            sender_ip = ""
+            try:
+                sender_ip = session.peer[0] if session.peer else ""
+            except Exception:
+                pass
+
             # Build payload for API
             payload = {
                 "from_address": envelope.mail_from,
@@ -119,6 +126,7 @@ class InboundHandler:
                 "headers": {k: v for k, v in msg.items()},
                 "attachments": attachments,
                 "recipients": envelope.rcpt_tos,
+                "sender_ip": sender_ip,
             }
 
             # POST to Bastion Mail API
