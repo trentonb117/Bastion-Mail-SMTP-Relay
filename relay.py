@@ -42,8 +42,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 MAIL_API_URL = os.environ.get("MAIL_API_URL", "https://smtp.bastionhq.me")
-API_SECRET = os.environ.get("API_SECRET", "") or os.environ.get("API_SECRET", "")
-HOSTNAME = os.environ.get("MAIL_HOSTNAME", "smtp.bastionhq.me")
+ADMIN_API_URL = os.environ.get("ADMIN_API_URL", "https://bastionhq.me")
+API_SECRET = os.environ.get("API_SECRET", "") or os.environ.get("INBOUND_API_SECRET", "")
+HOSTNAME = os.environ.get("HOSTNAME", os.environ.get("MAIL_HOSTNAME", "smtp.bastionhq.me"))
+DKIM_KEY_PATH = os.environ.get("DKIM_KEY_PATH", "/opt/bastion-relay/dkim/private.key")
+DKIM_SELECTOR = os.environ.get("DKIM_SELECTOR", "bastion")
+DKIM_DOMAIN = os.environ.get("DKIM_DOMAIN", "bastionmail.me")
 TLS_CERT = os.environ.get("TLS_CERT", "/etc/letsencrypt/live/smtp.bastionhq.me/fullchain.pem")
 TLS_KEY = os.environ.get("TLS_KEY", "/etc/letsencrypt/live/smtp.bastionhq.me/privkey.pem")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "25"))
@@ -192,6 +196,54 @@ class InboundHandler:
 
 
 # ---------------------------------------------------------------------------
+# DKIM key fetcher (per-domain from admin API, cached)
+# ---------------------------------------------------------------------------
+
+_dkim_cache = {}  # domain -> {key, selector, expires}
+
+def _get_dkim_key(domain):
+    """Fetch DKIM private key for a domain. Checks admin API first, falls back to local key."""
+    import time as _time
+    now = _time.time()
+
+    # Check cache (5 min TTL)
+    cached = _dkim_cache.get(domain)
+    if cached and cached["expires"] > now:
+        return cached["key"], cached["selector"]
+
+    # Try admin API for per-domain key
+    if ADMIN_API_URL and API_SECRET:
+        try:
+            r = requests.get(
+                f"{ADMIN_API_URL}/api/domains/{domain}/dkim/",
+                headers={"Authorization": f"Bearer {API_SECRET}"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("use_local_key"):
+                    # Default domain — use local VPS key
+                    pass
+                elif data.get("private_key"):
+                    key = data["private_key"].encode()
+                    selector = data.get("selector", DKIM_SELECTOR)
+                    _dkim_cache[domain] = {"key": key, "selector": selector, "expires": now + 300}
+                    log.info(f"DKIM key fetched from API for {domain}")
+                    return key, selector
+        except Exception as e:
+            log.error(f"DKIM API fetch failed for {domain}: {e}")
+
+    # Fallback: local key
+    if os.path.exists(DKIM_KEY_PATH):
+        with open(DKIM_KEY_PATH, "rb") as f:
+            key = f.read()
+        _dkim_cache[domain] = {"key": key, "selector": DKIM_SELECTOR, "expires": now + 300}
+        return key, DKIM_SELECTOR
+
+    return None, None
+
+
+# ---------------------------------------------------------------------------
 # Outbound HTTP API
 # ---------------------------------------------------------------------------
 
@@ -251,29 +303,26 @@ async def handle_send(request):
         if body_html:
             msg.attach(MIMEText(body_html, "html", "utf-8"))
 
-        # DKIM sign
+        # DKIM sign (fetch per-domain key from admin API, fallback to local)
         msg_bytes = msg.as_bytes()
         if HAS_DKIM:
-            from_domain = from_address.split("@")[1] if "@" in from_address else HOSTNAME
-            try:
-                key_path = os.environ.get("DKIM_KEY_PATH", "/opt/bastion-relay/dkim/private.key")
-                selector = os.environ.get("DKIM_SELECTOR", "bastion")
-                if os.path.exists(key_path):
-                    with open(key_path, "rb") as f:
-                        private_key = f.read()
+            from_domain = from_address.split("@")[1] if "@" in from_address else DKIM_DOMAIN
+            key_data, selector = _get_dkim_key(from_domain)
+            if key_data:
+                try:
                     sig = dkim.sign(
                         msg_bytes,
-                        selector.encode(),
-                        from_domain.encode(),
-                        private_key,
+                        selector.encode() if isinstance(selector, str) else selector,
+                        from_domain.encode() if isinstance(from_domain, str) else from_domain,
+                        key_data,
                         include_headers=[b"From", b"To", b"Subject", b"Date", b"Message-ID"],
                     )
                     msg_bytes = sig + msg_bytes
-                    log.info(f"DKIM signed for {from_domain}")
-                else:
-                    log.warning(f"DKIM key not found: {key_path}")
-            except Exception as e:
-                log.error(f"DKIM signing failed: {e}")
+                    log.info(f"DKIM signed for {from_domain} (selector: {selector})")
+                except Exception as e:
+                    log.error(f"DKIM signing failed for {from_domain}: {e}")
+            else:
+                log.warning(f"No DKIM key available for {from_domain}")
 
         msg_string = msg_bytes.decode("utf-8", errors="replace")
 
